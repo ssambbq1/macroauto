@@ -1,18 +1,28 @@
 #Cursor가 다듬어줌. 2025.08.13
 
-import pyautogui
 import time
 from datetime import datetime, timedelta
-import tkinter as tk
-from tkinter import ttk, simpledialog, messagebox, filedialog
 import json
 import os
-import keyboard
 import threading
 import logging
-from tkcalendar import Calendar
-from PIL import Image, ImageTk
 import sys
+
+# GUI/automation libraries that require a display will be imported lazily
+# to avoid import-time failures on headless hosts (e.g., Streamlit Cloud).
+tk = None
+ttk = None
+simpledialog = None
+messagebox = None
+filedialog = None
+Calendar = None
+Image = None
+ImageTk = None
+pyautogui = None
+keyboard = None
+
+# Helper flag: True when GUI automation is available
+AUTOMATION_AVAILABLE = False
 
 # 로깅 설정
 logging.basicConfig(
@@ -34,12 +44,79 @@ class TNLMacro:
         self.total_dates = 0
         self.dates = []
         self.ref_date = ""
-        
-        # PyAutoGUI 설정
-        pyautogui.FAILSAFE = True
-        pyautogui.PAUSE = 0.5
-        
-        self.setup_gui()
+        # Try to initialize optional libraries (lazy, safe)
+        self._init_optional_libs()
+
+        # If Tkinter wasn't loaded (e.g., running on Streamlit/cloud), skip GUI setup
+        if tk is not None:
+            # PyAutoGUI 설정 if available
+            if pyautogui is not None:
+                try:
+                    pyautogui.FAILSAFE = True
+                    pyautogui.PAUSE = 0.5
+                except Exception:
+                    # ignore pyautogui configuration errors at init
+                    pass
+
+            self.setup_gui()
+        else:
+            # Running in headless mode (Streamlit). Create minimal placeholders
+            logging.info("Running in headless mode: GUI setup skipped")
+
+    def _init_optional_libs(self):
+        """Try to import optional GUI and automation libraries safely.
+        Sets module-level globals when imports succeed. This avoids
+        import-time failures on headless hosts (like Streamlit Cloud).
+        """
+        global tk, ttk, simpledialog, messagebox, filedialog
+        global Calendar, Image, ImageTk, pyautogui, keyboard, AUTOMATION_AVAILABLE
+
+        # Try tkinter (may fail on headless linux)
+        try:
+            import tkinter as _tk
+            from tkinter import ttk as _ttk, simpledialog as _sd, messagebox as _mb, filedialog as _fd
+            tk = _tk
+            ttk = _ttk
+            simpledialog = _sd
+            messagebox = _mb
+            filedialog = _fd
+        except Exception:
+            tk = None
+            ttk = None
+            simpledialog = None
+            messagebox = None
+            filedialog = None
+
+        # tkcalendar (optional)
+        try:
+            from tkcalendar import Calendar as _Calendar
+            Calendar = _Calendar
+        except Exception:
+            Calendar = None
+
+        # PIL (optional)
+        try:
+            from PIL import Image as _Image, ImageTk as _ImageTk
+            Image = _Image
+            ImageTk = _ImageTk
+        except Exception:
+            Image = None
+            ImageTk = None
+
+        # GUI automation libs: only attempt when display is likely available
+        AUTOMATION_AVAILABLE = False
+        try:
+            should_try = (os.name == 'nt') or ('DISPLAY' in os.environ)
+            if should_try:
+                import pyautogui as _pyautogui
+                import keyboard as _keyboard
+                pyautogui = _pyautogui
+                keyboard = _keyboard
+                AUTOMATION_AVAILABLE = True
+        except Exception:
+            pyautogui = None
+            keyboard = None
+            AUTOMATION_AVAILABLE = False
     
     def setup_gui(self):
         self.root = tk.Tk()
@@ -190,6 +267,16 @@ class TNLMacro:
             logging.info(message)
     
     def set_coords_gui(self):
+        if tk is None or pyautogui is None:
+            # Running headless or automation libs not available
+            logging.warning("set_coords_gui called but GUI/automation is not available")
+            if messagebox is not None:
+                try:
+                    messagebox.showwarning("사용 불가", "좌표 설정은 GUI 환경(로컬 Windows 등)에서만 동작합니다.")
+                except Exception:
+                    pass
+            return
+
         if not self.coords:
             self.coords = {}
         
@@ -536,7 +623,10 @@ class TNLMacro:
             time.sleep(0.1)
     
     def run(self):
-        self.root.mainloop()
+        if tk is not None and hasattr(self, 'root'):
+            self.root.mainloop()
+        else:
+            logging.info("TNLMacro.run() called in headless mode; GUI loop not started.")
 
 if __name__ == "__main__":
     app = TNLMacro()
